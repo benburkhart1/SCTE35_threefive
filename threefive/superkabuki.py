@@ -195,17 +195,40 @@ class SuperKabuki(SixFix):
         active = io.BytesIO()
         pkt_count = 0
         chunk_size = 530
+        packets_processed = 0
+        packets_written = 0
         with self.outfile as outfile:
             for pkt in self.iter_pkts():
+                packets_processed += 1
                 pid = self._parse_pid(pkt[1], pkt[2])
-                pkt = self._parse_by_pid(pkt, pid)
-                if pkt:
-                    self.iframe_action(pkt, active)
-                    active.write(pkt)
-                    pkt_count = (pkt_count + 1) % chunk_size
-                    if not pkt_count:
-                        outfile.write(active.getbuffer())
-                        active = io.BytesIO()
+                
+                # Try to parse the packet
+                parsed_pkt = self._parse_by_pid(pkt, pid)
+                
+                # CRITICAL FIX: Always use a packet - either parsed or original
+                if parsed_pkt:
+                    output_pkt = parsed_pkt
+                else:
+                    # If parsing returned None (e.g., PMT continuation packets),
+                    # use the original packet
+                    output_pkt = pkt
+                
+                # Perform iframe action and write packet
+                self.iframe_action(output_pkt, active)
+                active.write(output_pkt)
+                packets_written += 1
+                
+                # Flush buffer periodically
+                pkt_count = (pkt_count + 1) % chunk_size
+                if not pkt_count:
+                    outfile.write(active.getbuffer())
+                    active = io.BytesIO()
+            
+            # CRITICAL FIX: Flush remaining packets
+            if active.tell() > 0:
+                outfile.write(active.getbuffer())
+        
+        print2(f"Processed {packets_processed} packets, wrote {packets_written} packets")
 
     def _gen_time_signal(self, pts):
         cue = Cue()
